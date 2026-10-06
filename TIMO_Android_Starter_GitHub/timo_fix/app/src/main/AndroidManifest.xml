@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Internet for ESP32 and OpenAI -->
+    <!-- اتصال به اینترنت برای OpenAI و ESP32 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Microphone / speech recognition -->
+    <!-- دسترسی به میکروفن گوشی -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
@@ -12,7 +12,7 @@
         android:usesCleartextTraffic="true"
         android:label="TIMO"
         android:supportsRtl="true"
-        android:theme="@style/Theme.TIMO">
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
             android:name=".MainActivity"
