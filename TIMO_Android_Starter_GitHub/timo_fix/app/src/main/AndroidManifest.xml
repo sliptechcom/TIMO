@@ -9,8 +9,8 @@
         android:allowBackup="true"
         android:label="TIMO"
         android:supportsRtl="true"
-        android:theme="@style/Theme.TIMO"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
 
         <activity
             android:name=".MainActivity"
