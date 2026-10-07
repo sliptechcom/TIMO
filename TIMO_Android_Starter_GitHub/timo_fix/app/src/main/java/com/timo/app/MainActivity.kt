@@ -1,112 +1,135 @@
 package com.timo.app
 
 import android.Manifest
-import android.app.Activity
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import android.text.InputType
 import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
-import org.json.JSONObject
+import androidx.appcompat.app.AppCompatActivity
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.concurrent.thread
 
-class MainActivity : Activity() {
+class MainActivity : AppCompatActivity() {
+
+    // ============================================================
+    // TIMO
+    // ============================================================
+
+    private val esp32Url = "http://192.168.1.102"
+
+    // کلید API خودت را همین‌جا نگه دار
+    private val openAiApiKey = "YOUR_OPENAI_API_KEY"
+
+    private val openAiModel = "gpt-6-luna"
+
+    // ============================================================
+    // UI
+    // ============================================================
 
     private lateinit var statusText: TextView
     private lateinit var conversationText: TextView
-    private lateinit var apiKeyEdit: EditText
-    private lateinit var talkButton: Button
+    private lateinit var inputText: EditText
+    private lateinit var sendButton: Button
+    private lateinit var micButton: Button
+
+    // ============================================================
+    // Speech Recognition
+    // ============================================================
+
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var isListening = false
+
+    // ============================================================
+    // TTS
+    // ============================================================
 
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var pendingSpeech: String? = null
 
-    private var recognizer: SpeechRecognizer? = null
+    // ============================================================
+    // Audio
+    // ============================================================
 
-    private val esp32Ip = "192.168.1.102"
+    private lateinit var audioManager: AudioManager
+    private var audioFocusRequest: AudioFocusRequest? = null
+
+    // ============================================================
+    // ON CREATE
+    // ============================================================
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        createInterface()
-        initializeTts()
-        requestMicrophonePermission()
+        audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+
+        createUI()
+        setupTTS()
+        setupSpeechRecognizer()
+
+        checkEsp32()
+
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                1001
+            )
+        }
     }
 
     // ============================================================
-    // USER INTERFACE
+    // UI
     // ============================================================
 
-    private fun createInterface() {
+    private fun createUI() {
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
-        root.gravity = Gravity.CENTER_HORIZONTAL
-        root.setPadding(32, 32, 32, 32)
-
-        val title = TextView(this)
-        title.text = "TIMO"
-        title.textSize = 42f
-        title.gravity = Gravity.CENTER
-
-        val subtitle = TextView(this)
-        subtitle.text = "هوش مصنوعی شخصی شما"
-        subtitle.textSize = 18f
-        subtitle.gravity = Gravity.CENTER
-
-        apiKeyEdit = EditText(this)
-
-        apiKeyEdit.hint = "OpenAI API Key"
-
-        apiKeyEdit.inputType =
-            InputType.TYPE_CLASS_TEXT or
-            InputType.TYPE_TEXT_VARIATION_PASSWORD
-
-        talkButton = Button(this)
-        talkButton.text = "🎤 صحبت با TIMO"
-        talkButton.textSize = 18f
-
-        val espButton = Button(this)
-        espButton.text = "📡 وضعیت TIMO"
-        espButton.textSize = 18f
+        root.setPadding(24, 24, 24, 24)
 
         statusText = TextView(this)
-        statusText.text = "TIMO در حال آماده‌سازی..."
-        statusText.textSize = 19f
-        statusText.gravity = Gravity.CENTER
-        statusText.setPadding(0, 20, 0, 20)
-
-        conversationText = TextView(this)
-        conversationText.text = ""
-        conversationText.textSize = 19f
-        conversationText.setPadding(10, 20, 10, 20)
-
-        val scroll = ScrollView(this)
-        scroll.addView(conversationText)
-
-        root.addView(title)
-        root.addView(subtitle)
-        root.addView(apiKeyEdit)
-        root.addView(talkButton)
-        root.addView(espButton)
-        root.addView(statusText)
+        statusText.text = "🔄 TIMO در حال آماده‌سازی..."
+        statusText.textSize = 18f
+        statusText.setPadding(0, 0, 0, 20)
 
         root.addView(
-            scroll,
+            statusText,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        conversationText = TextView(this)
+        conversationText.textSize = 18f
+        conversationText.setPadding(0, 20, 0, 20)
+
+        val scrollView = ScrollView(this)
+
+        scrollView.addView(conversationText)
+
+        root.addView(
+            scrollView,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 0,
@@ -114,39 +137,76 @@ class MainActivity : Activity() {
             )
         )
 
+        inputText = EditText(this)
+        inputText.hint = "پیام خود را بنویسید..."
+        inputText.textSize = 17f
+
+        root.addView(
+            inputText,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        sendButton = Button(this)
+        sendButton.text = "ارسال"
+
+        sendButton.setOnClickListener {
+
+            val text = inputText.text.toString().trim()
+
+            if (text.isNotEmpty()) {
+                inputText.setText("")
+                sendToTimo(text)
+            }
+        }
+
+        root.addView(
+            sendButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        micButton = Button(this)
+        micButton.text = "🎤 صحبت با TIMO"
+
+        micButton.setOnClickListener {
+
+            if (isListening) {
+                stopListening()
+            } else {
+                startListening()
+            }
+        }
+
+        root.addView(
+            micButton,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        root.gravity = Gravity.CENTER
+
         setContentView(root)
-
-        talkButton.setOnClickListener {
-            startListening()
-        }
-
-        espButton.setOnClickListener {
-            checkEsp32()
-        }
     }
 
     // ============================================================
-    // TTS - FINAL VERSION
+    // TTS SETUP
     // ============================================================
 
-    private fun initializeTts() {
+    private fun setupTTS() {
 
-        ttsReady = false
-
-        /*
-         * از همان موتور TTS پیش‌فرض گوشی استفاده می‌کنیم.
-         * چون کاربر قبلاً در تنظیمات سامسونگ صدای TTS را تست کرده
-         * و صدای Samsung TTS سالم است.
-         */
         tts = TextToSpeech(this) { result ->
 
             if (result != TextToSpeech.SUCCESS) {
 
-                ttsReady = false
-
                 runOnUiThread {
-                    statusText.text =
-                        "❌ راه‌اندازی صدای TIMO ناموفق بود"
+                    statusText.text = "❌ خطا در راه‌اندازی صدای TIMO"
                 }
 
                 return@TextToSpeech
@@ -154,10 +214,22 @@ class MainActivity : Activity() {
 
             val engine = tts ?: return@TextToSpeech
 
-            // ----------------------------------------------------
-            // مسیر صوتی: MEDIA / SPEECH
-            // ----------------------------------------------------
+            // اول زبان پیش‌فرض گوشی
+            var languageResult =
+                engine.setLanguage(Locale.getDefault())
 
+            // اگر مناسب نبود، فارسی
+            if (languageResult == TextToSpeech.LANG_MISSING_DATA ||
+                languageResult == TextToSpeech.LANG_NOT_SUPPORTED
+            ) {
+                languageResult = engine.setLanguage(
+                    Locale("fa", "IR")
+                )
+            }
+
+            /*
+             * تنظیم AudioAttributes
+             */
             engine.setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -167,61 +239,13 @@ class MainActivity : Activity() {
                     .build()
             )
 
-            // ----------------------------------------------------
-            // ابتدا زبان پیش‌فرض گوشی
-            // ----------------------------------------------------
-
-            val systemLocale = Locale.getDefault()
-
-            var languageResult =
-                engine.setLanguage(systemLocale)
-
             /*
-             * اگر زبان پیش‌فرض مناسب نبود، فارسی را امتحان کن.
+             * Listener قبل از هر speak نصب می‌شود.
              */
-            if (
-                languageResult == TextToSpeech.LANG_MISSING_DATA ||
-                languageResult == TextToSpeech.LANG_NOT_SUPPORTED
-            ) {
-
-                languageResult =
-                    engine.setLanguage(
-                        Locale("fa", "IR")
-                    )
-            }
-
-            /*
-             * اگر فارسی هم موجود نبود، مهم نیست:
-             * TTS را آماده نگه می‌داریم و اجازه می‌دهیم
-             * موتور فعال گوشی با زبان پیش‌فرض خودش صحبت کند.
-             *
-             * این قسمت عمداً باعث گیر کردن TIMO نمی‌شود.
-             */
-            if (
-                languageResult == TextToSpeech.LANG_MISSING_DATA ||
-                languageResult == TextToSpeech.LANG_NOT_SUPPORTED
-            ) {
-
-                engine.setLanguage(systemLocale)
-            }
-
-            // سرعت طبیعی
-            engine.setSpeechRate(0.95f)
-
-            // Pitch طبیعی
-            engine.setPitch(1.0f)
-
-            // ----------------------------------------------------
-            // بسیار مهم:
-            // Listener باید قبل از speak ثبت شود.
-            // ----------------------------------------------------
-
             engine.setOnUtteranceProgressListener(
                 object : UtteranceProgressListener() {
 
-                    override fun onStart(
-                        utteranceId: String?
-                    ) {
+                    override fun onStart(utteranceId: String?) {
 
                         runOnUiThread {
                             statusText.text =
@@ -229,19 +253,19 @@ class MainActivity : Activity() {
                         }
                     }
 
-                    override fun onDone(
-                        utteranceId: String?
-                    ) {
+                    override fun onDone(utteranceId: String?) {
+
+                        releaseAudioFocus()
 
                         runOnUiThread {
                             statusText.text =
-                                "TIMO ONLINE ✓"
+                                "🟢 TIMO آماده است"
                         }
                     }
 
-                    override fun onError(
-                        utteranceId: String?
-                    ) {
+                    override fun onError(utteranceId: String?) {
+
+                        releaseAudioFocus()
 
                         runOnUiThread {
                             statusText.text =
@@ -251,28 +275,65 @@ class MainActivity : Activity() {
                 }
             )
 
-            // ----------------------------------------------------
-            // TTS آماده است
-            // ----------------------------------------------------
-
             ttsReady = true
 
             runOnUiThread {
+
                 statusText.text =
-                    "TIMO ONLINE ✓"
+                    "🟢 TIMO آماده است"
+
+                pendingSpeech?.let {
+                    pendingSpeech = null
+                    speak(it)
+                }
+            }
+        }
+    }
+
+    // ============================================================
+    // AUDIO FOCUS
+    // ============================================================
+
+    private fun requestAudioFocus(): Boolean {
+
+        return try {
+
+            val attributes =
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(
+                        AudioAttributes.CONTENT_TYPE_SPEECH
+                    )
+                    .build()
+
+            audioFocusRequest =
+                AudioFocusRequest.Builder(
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                )
+                    .setAudioAttributes(attributes)
+                    .setAcceptsDelayedFocusGain(false)
+                    .setOnAudioFocusChangeListener { }
+                    .build()
+
+            audioManager.requestAudioFocus(
+                audioFocusRequest!!
+            ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+
+        } catch (e: Exception) {
+
+            false
+        }
+    }
+
+    private fun releaseAudioFocus() {
+
+        try {
+
+            audioFocusRequest?.let {
+                audioManager.abandonAudioFocusRequest(it)
             }
 
-            /*
-             * اگر OpenAI قبل از آماده‌شدن TTS جواب داده بود،
-             * حالا همان جواب را پخش کن.
-             */
-            val waitingText = pendingSpeech
-
-            pendingSpeech = null
-
-            if (!waitingText.isNullOrBlank()) {
-                speak(waitingText)
-            }
+        } catch (_: Exception) {
         }
     }
 
@@ -289,13 +350,8 @@ class MainActivity : Activity() {
             .replace("_", "")
             .trim()
 
-        if (cleanText.isBlank()) {
-            return
-        }
+        if (cleanText.isBlank()) return
 
-        /*
-         * اگر TTS هنوز آماده نیست، جواب را نگه می‌داریم.
-         */
         if (!ttsReady || tts == null) {
 
             pendingSpeech = cleanText
@@ -315,158 +371,138 @@ class MainActivity : Activity() {
                 "🔊 TIMO در حال صحبت است..."
         }
 
-        // صدای قبلی را متوقف کن
+        /*
+         * گرفتن Audio Focus
+         */
+        requestAudioFocus()
+
+        /*
+         * قطع گفتار قبلی
+         */
         engine.stop()
 
         /*
-         * پاسخ را مستقیماً از TTS پخش کن.
-         *
-         * هیچ WAV
-         * هیچ MediaPlayer
-         * هیچ فایل موقت
+         * بسیار مهم:
+         * خروجی صدا روی STREAM_MUSIC
          */
+        val params = Bundle()
+
+        params.putInt(
+            TextToSpeech.Engine.KEY_PARAM_STREAM,
+            AudioManager.STREAM_MUSIC
+        )
+
+        params.putFloat(
+            TextToSpeech.Engine.KEY_PARAM_VOLUME,
+            1.0f
+        )
+
         val result = engine.speak(
             cleanText,
             TextToSpeech.QUEUE_FLUSH,
-            null,
+            params,
             "TIMO_REPLY"
         )
 
         if (result != TextToSpeech.SUCCESS) {
 
+            releaseAudioFocus()
+
             runOnUiThread {
                 statusText.text =
-                    "❌ TTS نتوانست صدا را پخش کند"
+                    "❌ ارسال صدا به خروجی گوشی انجام نشد"
             }
         }
     }
 
     // ============================================================
-    // MICROPHONE PERMISSION
+    // SPEECH RECOGNIZER
     // ============================================================
 
-    private fun requestMicrophonePermission() {
+    private fun setupSpeechRecognizer() {
 
-        if (
-            checkSelfPermission(
-                Manifest.permission.RECORD_AUDIO
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
 
-            requestPermissions(
-                arrayOf(
-                    Manifest.permission.RECORD_AUDIO
-                ),
-                100
-            )
-        }
-    }
-
-    // ============================================================
-    // SPEECH RECOGNITION
-    // ============================================================
-
-    private fun startListening() {
-
-        if (
-            checkSelfPermission(
-                Manifest.permission.RECORD_AUDIO
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-
-            requestMicrophonePermission()
-            return
-        }
-
-        if (
-            !SpeechRecognizer.isRecognitionAvailable(
-                this
-            )
-        ) {
-
-            statusText.text =
-                "سرویس تشخیص صدا در گوشی موجود نیست"
+            runOnUiThread {
+                statusText.text =
+                    "❌ تشخیص گفتار روی گوشی در دسترس نیست"
+            }
 
             return
         }
 
-        recognizer?.destroy()
+        speechRecognizer =
+            SpeechRecognizer.createSpeechRecognizer(this)
 
-        recognizer =
-            SpeechRecognizer.createSpeechRecognizer(
-                this
-            )
-
-        recognizer?.setRecognitionListener(
-
+        speechRecognizer?.setRecognitionListener(
             object : RecognitionListener {
 
-                override fun onReadyForSpeech(
-                    params: Bundle?
-                ) {
+                override fun onReadyForSpeech(params: Bundle?) {
 
-                    statusText.text =
-                        "🎤 آماده‌ام، صحبت کنید..."
+                    runOnUiThread {
+                        statusText.text =
+                            "🎤 گوش می‌دهم..."
+                    }
                 }
 
                 override fun onBeginningOfSpeech() {
 
-                    statusText.text =
-                        "🎤 دارم گوش می‌کنم..."
+                    runOnUiThread {
+                        statusText.text =
+                            "🎤 در حال شنیدن..."
+                    }
                 }
 
-                override fun onRmsChanged(
-                    rmsdB: Float
-                ) {
-                }
+                override fun onRmsChanged(rmsdB: Float) {}
 
-                override fun onBufferReceived(
-                    buffer: ByteArray?
-                ) {
-                }
+                override fun onBufferReceived(buffer: ByteArray?) {}
 
                 override fun onEndOfSpeech() {
 
-                    statusText.text =
-                        "🤖 در حال فکر کردن..."
+                    runOnUiThread {
+                        statusText.text =
+                            "⏳ در حال پردازش..."
+                    }
                 }
 
-                override fun onError(
-                    error: Int
-                ) {
+                override fun onError(error: Int) {
 
-                    statusText.text =
-                        speechError(error)
+                    isListening = false
 
-                    recognizer?.destroy()
-                    recognizer = null
-                }
-
-                override fun onResults(
-                    results: Bundle?
-                ) {
-
-                    val text =
-                        results
-                            ?.getStringArrayList(
-                                SpeechRecognizer.RESULTS_RECOGNITION
-                            )
-                            ?.firstOrNull()
-
-                    recognizer?.destroy()
-                    recognizer = null
-
-                    if (!text.isNullOrBlank()) {
-
-                        conversationText.text =
-                            "شما:\n$text"
-
-                        askOpenAI(text)
-
-                    } else {
+                    runOnUiThread {
+                        micButton.text =
+                            "🎤 صحبت با TIMO"
 
                         statusText.text =
-                            "متوجه صحبت شما نشدم"
+                            "🟢 TIMO آماده است"
+                    }
+                }
+
+                override fun onResults(results: Bundle?) {
+
+                    isListening = false
+
+                    val matches =
+                        results?.getStringArrayList(
+                            SpeechRecognizer.RESULTS_RECOGNITION
+                        )
+
+                    val text =
+                        matches?.firstOrNull()?.trim()
+
+                    runOnUiThread {
+
+                        micButton.text =
+                            "🎤 صحبت با TIMO"
+
+                        if (!text.isNullOrBlank()) {
+
+                            sendToTimo(text)
+                        } else {
+
+                            statusText.text =
+                                "🟢 TIMO آماده است"
+                        }
                     }
                 }
 
@@ -482,9 +518,31 @@ class MainActivity : Activity() {
                 }
             }
         )
+    }
+
+    // ============================================================
+    // START LISTENING
+    // ============================================================
+
+    private fun startListening() {
+
+        if (checkSelfPermission(
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+
+            requestPermissions(
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                1001
+            )
+
+            return
+        }
+
+        val recognizer = speechRecognizer ?: return
 
         val intent =
-            Intent(
+            android.content.Intent(
                 RecognizerIntent.ACTION_RECOGNIZE_SPEECH
             )
 
@@ -504,84 +562,56 @@ class MainActivity : Activity() {
         )
 
         intent.putExtra(
-            RecognizerIntent.EXTRA_PROMPT,
-            "با TIMO صحبت کنید"
+            RecognizerIntent.EXTRA_PARTIAL_RESULTS,
+            false
         )
 
-        recognizer?.startListening(intent)
+        intent.putExtra(
+            RecognizerIntent.EXTRA_MAX_RESULTS,
+            3
+        )
+
+        isListening = true
+
+        micButton.text = "⏹ توقف"
+
+        recognizer.startListening(intent)
     }
 
     // ============================================================
-    // SPEECH ERRORS
+    // STOP LISTENING
     // ============================================================
 
-    private fun speechError(
-        error: Int
-    ): String {
+    private fun stopListening() {
 
-        return when (error) {
+        isListening = false
 
-            SpeechRecognizer.ERROR_AUDIO ->
-                "خطا در میکروفن"
+        speechRecognizer?.stopListening()
 
-            SpeechRecognizer.ERROR_CLIENT ->
-                "خطای برنامه"
-
-            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
-                "اجازه میکروفن داده نشده"
-
-            SpeechRecognizer.ERROR_NETWORK ->
-                "خطای اینترنت"
-
-            SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
-                "اتصال اینترنت زمان‌بر شد"
-
-            SpeechRecognizer.ERROR_NO_MATCH ->
-                "صدای واضح دریافت نشد"
-
-            SpeechRecognizer.ERROR_RECOGNIZER_BUSY ->
-                "تشخیص صدا مشغول است"
-
-            SpeechRecognizer.ERROR_SERVER ->
-                "خطای سرویس تشخیص صدا"
-
-            SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
-                "صدایی شنیده نشد"
-
-            else ->
-                "خطای تشخیص صدا: $error"
-        }
-    }
-
-    // ============================================================
-    // OPENAI
-    // ============================================================
-
-    private fun askOpenAI(
-        question: String
-    ) {
-
-        val key =
-            apiKeyEdit.text
-                .toString()
-                .trim()
-
-        if (key.isEmpty()) {
-
-            statusText.text =
-                "ابتدا OpenAI API Key را وارد کنید"
-
-            return
-        }
-
-        talkButton.isEnabled = false
+        micButton.text =
+            "🎤 صحبت با TIMO"
 
         statusText.text =
-            "🤖 TIMO در حال فکر کردن..."
+            "🟢 TIMO آماده است"
+    }
+
+    // ============================================================
+    // SEND TO OPENAI
+    // ============================================================
+
+    private fun sendToTimo(userText: String) {
+
+        conversationText.append(
+            "\n\n👤 شما:\n$userText\n"
+        )
+
+        statusText.text =
+            "🧠 TIMO در حال فکر کردن..."
+
+        sendButton.isEnabled = false
+        micButton.isEnabled = false
 
         thread {
-
-            var connection: HttpURLConnection? = null
 
             try {
 
@@ -590,269 +620,254 @@ class MainActivity : Activity() {
                         "https://api.openai.com/v1/responses"
                     )
 
-                connection =
+                val connection =
                     url.openConnection()
                             as HttpURLConnection
 
                 connection.requestMethod = "POST"
-
-                connection.connectTimeout = 15000
-                connection.readTimeout = 60000
-
-                connection.doOutput = true
-
-                connection.setRequestProperty(
-                    "Authorization",
-                    "Bearer $key"
-                )
 
                 connection.setRequestProperty(
                     "Content-Type",
                     "application/json"
                 )
 
-                val request =
+                connection.setRequestProperty(
+                    "Authorization",
+                    "Bearer $openAiApiKey"
+                )
+
+                connection.doOutput = true
+
+                connection.connectTimeout = 30000
+                connection.readTimeout = 60000
+
+                /*
+                 * دستور اصلی TIMO
+                 */
+                val instructions = """
+                    تو TIMO هستی؛ یک دستیار فارسی‌زبان دوستانه و کاربردی.
+                    همیشه به فارسی پاسخ بده.
+                    پاسخ‌ها را طبیعی، کوتاه و قابل فهم بده.
+                    اگر سؤال ساده است، مستقیم جواب بده.
+                    از Markdown سنگین و علامت‌های اضافی استفاده نکن.
+                """.trimIndent()
+
+                val body =
                     JSONObject().apply {
 
                         put(
                             "model",
-                            "gpt-6-luna"
+                            openAiModel
                         )
 
                         put(
                             "instructions",
-                            """
-                            تو TIMO هستی.
-                            
-                            یک دستیار هوشمند فارسی‌زبان،
-                            طبیعی، دوستانه و سریع.
-                            
-                            همیشه به زبان کاربر پاسخ بده.
-                            
-                            اگر کاربر فارسی صحبت کرد،
-                            پاسخ را فارسی بده.
-                            
-                            پاسخ‌ها را برای گفتار صوتی
-                            کوتاه و طبیعی نگه دار.
-                            
-                            از Markdown، جدول و علامت‌های
-                            غیرضروری استفاده نکن.
-                            
-                            اگر سؤال ساده است،
-                            کوتاه جواب بده.
-                            """.trimIndent()
+                            instructions
                         )
 
                         put(
                             "input",
-                            question
+                            userText
                         )
                     }
 
                 connection.outputStream.use { output ->
 
                     output.write(
-                        request
-                            .toString()
-                            .toByteArray(
-                                Charsets.UTF_8
-                            )
+                        body.toString()
+                            .toByteArray(Charsets.UTF_8)
                     )
+
+                    output.flush()
                 }
 
                 val responseCode =
                     connection.responseCode
 
-                val responseStream =
+                val stream =
                     if (responseCode in 200..299) {
                         connection.inputStream
                     } else {
                         connection.errorStream
                     }
 
-                val response =
-                    responseStream
-                        .bufferedReader()
-                        .use {
-                            it.readText()
+                val reader =
+                    BufferedReader(
+                        InputStreamReader(
+                            stream,
+                            Charsets.UTF_8
+                        )
+                    )
+
+                val responseText =
+                    buildString {
+
+                        var line: String?
+
+                        while (
+                            reader.readLine()
+                                .also { line = it } != null
+                        ) {
+                            append(line)
                         }
+                    }
+
+                reader.close()
+                connection.disconnect()
 
                 if (responseCode !in 200..299) {
 
                     runOnUiThread {
 
-                        talkButton.isEnabled = true
-
                         statusText.text =
-                            "خطای OpenAI: HTTP $responseCode"
+                            "❌ خطای OpenAI: $responseCode"
 
-                        conversationText.text =
-                            response
+                        sendButton.isEnabled = true
+                        micButton.isEnabled = true
                     }
 
                     return@thread
                 }
 
-                val reply =
-                    extractReply(response)
+                val answer =
+                    extractOpenAIText(responseText)
+
+                if (answer.isBlank()) {
+
+                    runOnUiThread {
+
+                        statusText.text =
+                            "❌ پاسخ TIMO خالی بود"
+
+                        sendButton.isEnabled = true
+                        micButton.isEnabled = true
+                    }
+
+                    return@thread
+                }
 
                 runOnUiThread {
 
-                    talkButton.isEnabled = true
+                    conversationText.append(
+                        "\n🤖 TIMO:\n$answer\n"
+                    )
 
-                    conversationText.text =
-                        "شما:\n$question\n\nTIMO:\n$reply"
+                    sendButton.isEnabled = true
+                    micButton.isEnabled = true
 
                     /*
-                     * پاسخ OpenAI مستقیماً به TTS.
+                     * بعد از دریافت جواب،
+                     * TIMO همان جواب را می‌خواند.
                      */
-                    speak(reply)
+                    speak(answer)
                 }
 
             } catch (e: Exception) {
 
                 runOnUiThread {
 
-                    talkButton.isEnabled = true
-
                     statusText.text =
-                        "خطا در ارتباط با TIMO"
+                        "❌ خطای ارتباط: ${e.message}"
 
-                    conversationText.text =
-                        "جزئیات خطا:\n${e.message}"
+                    sendButton.isEnabled = true
+                    micButton.isEnabled = true
                 }
-
-            } finally {
-
-                connection?.disconnect()
             }
         }
     }
 
     // ============================================================
-    // OPENAI RESPONSE PARSER
+    // PARSE OPENAI RESPONSE
     // ============================================================
 
-    private fun extractReply(
-        responseText: String
+    private fun extractOpenAIText(
+        jsonString: String
     ): String {
 
-        return try {
+        try {
 
             val json =
-                JSONObject(responseText)
+                JSONObject(jsonString)
 
-            val direct =
-                json.optString(
-                    "output_text"
-                )
+            /*
+             * حالت ساده:
+             * output_text
+             */
+            val directText =
+                json.optString("output_text", "")
 
-            if (direct.isNotBlank()) {
+            if (directText.isNotBlank()) {
+                return directText.trim()
+            }
 
-                direct
+            /*
+             * حالت Responses API:
+             * output -> message -> content -> output_text
+             */
+            val output =
+                json.optJSONArray("output")
+                    ?: return ""
 
-            } else {
+            val result =
+                StringBuilder()
 
-                val output =
-                    json.optJSONArray(
-                        "output"
-                    )
+            for (i in 0 until output.length()) {
 
-                if (output == null) {
+                val item =
+                    output.optJSONObject(i)
+                        ?: continue
 
-                    "پاسخی دریافت نشد."
+                val content =
+                    item.optJSONArray("content")
+                        ?: continue
 
-                } else {
+                for (j in 0 until content.length()) {
 
-                    var result =
-                        "پاسخ متنی دریافت نشد."
+                    val part =
+                        content.optJSONObject(j)
+                            ?: continue
 
-                    for (
-                        i in 0 until output.length()
-                    ) {
+                    val type =
+                        part.optString("type", "")
 
-                        val item =
-                            output.optJSONObject(i)
-                                ?: continue
+                    if (type == "output_text") {
 
-                        if (
-                            item.optString("type")
-                            != "message"
-                        ) {
-                            continue
-                        }
+                        val text =
+                            part.optString("text", "")
 
-                        val content =
-                            item.optJSONArray(
-                                "content"
-                            )
-                                ?: continue
-
-                        for (
-                            j in 0 until content.length()
-                        ) {
-
-                            val part =
-                                content.optJSONObject(j)
-                                    ?: continue
-
-                            if (
-                                part.optString("type")
-                                == "output_text"
-                            ) {
-
-                                val text =
-                                    part.optString(
-                                        "text"
-                                    )
-
-                                if (text.isNotBlank()) {
-
-                                    result = text
-                                    break
-                                }
-                            }
-                        }
-
-                        if (
-                            result !=
-                            "پاسخ متنی دریافت نشد."
-                        ) {
-                            break
+                        if (text.isNotBlank()) {
+                            result.append(text)
                         }
                     }
-
-                    result
                 }
             }
 
-        } catch (e: Exception) {
+            return result.toString().trim()
 
-            "خطا در خواندن پاسخ TIMO."
+        } catch (_: Exception) {
+
+            return ""
         }
     }
 
     // ============================================================
-    // ESP32
+    // ESP32 CHECK
     // ============================================================
 
     private fun checkEsp32() {
-
-        statusText.text =
-            "📡 بررسی TIMO..."
 
         thread {
 
             try {
 
                 val url =
-                    URL(
-                        "http://$esp32Ip/"
-                    )
+                    URL("$esp32Url/ping")
 
                 val connection =
                     url.openConnection()
                             as HttpURLConnection
+
+                connection.requestMethod = "GET"
 
                 connection.connectTimeout = 3000
                 connection.readTimeout = 3000
@@ -860,48 +875,67 @@ class MainActivity : Activity() {
                 val code =
                     connection.responseCode
 
+                val result =
+                    if (code == 200) {
+
+                        connection.inputStream
+                            .bufferedReader()
+                            .use {
+                                it.readText()
+                            }
+
+                    } else {
+                        ""
+                    }
+
                 connection.disconnect()
 
                 runOnUiThread {
 
-                    if (code in 200..299) {
+                    if (result.trim() == "PONG") {
 
                         statusText.text =
-                            "TIMO ONLINE ✓\nESP32: HTTP $code"
+                            "🟢 TIMO ONLINE ✓"
 
                     } else {
 
                         statusText.text =
-                            "ESP32 HTTP $code"
+                            "🟡 TIMO آنلاین نیست"
                     }
                 }
 
-            } catch (e: Exception) {
+            } catch (_: Exception) {
 
                 runOnUiThread {
 
                     statusText.text =
-                        "ارتباط با ESP32 برقرار نشد"
+                        "🟡 TIMO آنلاین نیست"
                 }
             }
         }
     }
 
     // ============================================================
-    // CLEANUP
+    // DESTROY
     // ============================================================
 
     override fun onDestroy() {
 
-        recognizer?.destroy()
-        recognizer = null
+        try {
+            speechRecognizer?.destroy()
+        } catch (_: Exception) {
+        }
 
-        tts?.stop()
-        tts?.shutdown()
+        try {
+            tts?.stop()
+            tts?.shutdown()
+        } catch (_: Exception) {
+        }
+
+        releaseAudioFocus()
+
+        speechRecognizer = null
         tts = null
-
-        ttsReady = false
-        pendingSpeech = null
 
         super.onDestroy()
     }
