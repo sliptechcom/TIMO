@@ -32,7 +32,7 @@ class MainActivity : Activity() {
     private var tts: TextToSpeech? = null
     private var recognizer: SpeechRecognizer? = null
 
-    private val esp32Ip = "192.168.1.105"
+    private val esp32Ip = "192.168.1.102"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
