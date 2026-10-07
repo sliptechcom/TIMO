@@ -51,19 +51,16 @@ class MainActivity : Activity() {
         root.setPadding(32, 32, 32, 32)
 
         val title = TextView(this)
-
         title.text = "TIMO"
         title.textSize = 42f
         title.gravity = Gravity.CENTER
 
         val subtitle = TextView(this)
-
         subtitle.text = "هوش مصنوعی شخصی شما"
         subtitle.textSize = 18f
         subtitle.gravity = Gravity.CENTER
 
         apiKeyEdit = EditText(this)
-
         apiKeyEdit.hint = "OpenAI API Key"
 
         apiKeyEdit.inputType =
@@ -71,29 +68,24 @@ class MainActivity : Activity() {
             InputType.TYPE_TEXT_VARIATION_PASSWORD
 
         talkButton = Button(this)
-
         talkButton.text = "🎤  صحبت با TIMO"
         talkButton.textSize = 18f
 
         val espButton = Button(this)
-
         espButton.text = "📡  وضعیت TIMO"
 
         statusText = TextView(this)
-
         statusText.text = "TIMO آماده است"
         statusText.textSize = 19f
         statusText.gravity = Gravity.CENTER
         statusText.setPadding(0, 20, 0, 20)
 
         conversationText = TextView(this)
-
         conversationText.text = ""
         conversationText.textSize = 19f
         conversationText.setPadding(10, 20, 10, 20)
 
         val scroll = ScrollView(this)
-
         scroll.addView(conversationText)
 
         root.addView(title)
@@ -135,10 +127,8 @@ class MainActivity : Activity() {
                     )
 
                 if (
-                    languageResult ==
-                    TextToSpeech.LANG_MISSING_DATA ||
-                    languageResult ==
-                    TextToSpeech.LANG_NOT_SUPPORTED
+                    languageResult == TextToSpeech.LANG_MISSING_DATA ||
+                    languageResult == TextToSpeech.LANG_NOT_SUPPORTED
                 ) {
 
                     statusText.text =
@@ -192,9 +182,7 @@ class MainActivity : Activity() {
         }
 
         if (
-            !SpeechRecognizer.isRecognitionAvailable(
-                this
-            )
+            !SpeechRecognizer.isRecognitionAvailable(this)
         ) {
 
             statusText.text =
@@ -206,9 +194,7 @@ class MainActivity : Activity() {
         recognizer?.destroy()
 
         recognizer =
-            SpeechRecognizer.createSpeechRecognizer(
-                this
-            )
+            SpeechRecognizer.createSpeechRecognizer(this)
 
         recognizer?.setRecognitionListener(
             object : RecognitionListener {
@@ -399,11 +385,8 @@ class MainActivity : Activity() {
                         as HttpURLConnection
 
                 connection.requestMethod = "POST"
-
                 connection.connectTimeout = 15000
-
                 connection.readTimeout = 60000
-
                 connection.doOutput = true
 
                 connection.setRequestProperty(
@@ -479,10 +462,11 @@ class MainActivity : Activity() {
 
                 val response =
                     responseStream
-                        .bufferedReader()
-                        .use {
+                        ?.bufferedReader()
+                        ?.use {
                             it.readText()
                         }
+                        ?: ""
 
                 if (responseCode !in 200..299) {
 
@@ -579,8 +563,7 @@ class MainActivity : Activity() {
                                 ?: continue
 
                         if (
-                            item.optString("type")
-                            != "message"
+                            item.optString("type") != "message"
                         ) {
                             continue
                         }
@@ -600,8 +583,7 @@ class MainActivity : Activity() {
                                     ?: continue
 
                             if (
-                                part.optString("type")
-                                == "output_text"
+                                part.optString("type") == "output_text"
                             ) {
 
                                 val text =
@@ -644,37 +626,60 @@ class MainActivity : Activity() {
 
         thread {
 
+            var connection: HttpURLConnection? = null
+
             try {
 
                 val url =
                     URL(
-                        "http://$esp32Ip/"
+                        "http://$esp32Ip/ping"
                     )
 
-                val connection =
+                connection =
                     url.openConnection()
                         as HttpURLConnection
 
-                connection.connectTimeout = 3000
-
-                connection.readTimeout = 3000
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+                connection.useCaches = false
 
                 val code =
                     connection.responseCode
 
-                connection.disconnect()
+                val response =
+                    if (code in 200..299) {
+
+                        connection.inputStream
+                            .bufferedReader()
+                            .use {
+                                it.readText()
+                            }
+
+                    } else {
+
+                        connection.errorStream
+                            ?.bufferedReader()
+                            ?.use {
+                                it.readText()
+                            }
+                            ?: ""
+                    }
 
                 runOnUiThread {
 
-                    if (code in 200..299) {
+                    if (
+                        code == 200 &&
+                        response.trim() == "PONG"
+                    ) {
 
                         statusText.text =
-                            "TIMO ONLINE ✓\nESP32: HTTP $code"
+                            "TIMO ONLINE ✓\nESP32: PONG"
 
                     } else {
 
                         statusText.text =
-                            "ESP32 HTTP $code"
+                            "ESP32: HTTP $code\n$response"
                     }
                 }
 
@@ -683,8 +688,12 @@ class MainActivity : Activity() {
                 runOnUiThread {
 
                     statusText.text =
-                        "ارتباط با ESP32 برقرار نشد"
+                        "ESP32 ERROR:\n${e.message}"
                 }
+
+            } finally {
+
+                connection?.disconnect()
             }
         }
     }
