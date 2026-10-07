@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
@@ -31,6 +32,7 @@ class MainActivity : Activity() {
 
     private var tts: TextToSpeech? = null
     private var recognizer: SpeechRecognizer? = null
+    private var ttsReady = false
 
     private val esp32Ip = "192.168.1.102"
 
@@ -62,7 +64,6 @@ class MainActivity : Activity() {
 
         apiKeyEdit = EditText(this)
         apiKeyEdit.hint = "OpenAI API Key"
-
         apiKeyEdit.inputType =
             InputType.TYPE_CLASS_TEXT or
             InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -126,13 +127,51 @@ class MainActivity : Activity() {
                         Locale("fa", "IR")
                     )
 
+                tts?.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(
+                            AudioAttributes.USAGE_ASSISTANT
+                        )
+                        .setContentType(
+                            AudioAttributes.CONTENT_TYPE_SPEECH
+                        )
+                        .build()
+                )
+
+                tts?.setSpeechRate(0.95f)
+                tts?.setPitch(1.0f)
+
                 if (
-                    languageResult == TextToSpeech.LANG_MISSING_DATA ||
-                    languageResult == TextToSpeech.LANG_NOT_SUPPORTED
+                    languageResult ==
+                    TextToSpeech.LANG_MISSING_DATA ||
+                    languageResult ==
+                    TextToSpeech.LANG_NOT_SUPPORTED
                 ) {
 
+                    ttsReady = false
+
+                    runOnUiThread {
+                        statusText.text =
+                            "صدای فارسی روی گوشی نصب نیست"
+                    }
+
+                } else {
+
+                    ttsReady = true
+
+                    runOnUiThread {
+                        statusText.text =
+                            "TIMO آماده است ✓"
+                    }
+                }
+
+            } else {
+
+                ttsReady = false
+
+                runOnUiThread {
                     statusText.text =
-                        "صدای فارسی روی گوشی نصب نیست"
+                        "موتور صدای TIMO آماده نشد"
                 }
             }
         }
@@ -144,12 +183,31 @@ class MainActivity : Activity() {
             return
         }
 
-        tts?.speak(
-            text,
-            TextToSpeech.QUEUE_FLUSH,
-            null,
-            "TIMO_REPLY"
-        )
+        if (!ttsReady || tts == null) {
+
+            statusText.text =
+                "صدای TIMO آماده نیست"
+
+            return
+        }
+
+        tts?.stop()
+
+        val result =
+            tts?.speak(
+                text,
+                TextToSpeech.QUEUE_FLUSH,
+                null,
+                "TIMO_REPLY"
+            )
+
+        if (
+            result != TextToSpeech.SUCCESS
+        ) {
+
+            statusText.text =
+                "خطا در پخش صدای TIMO"
+        }
     }
 
     private fun requestMicrophonePermission() {
@@ -182,7 +240,9 @@ class MainActivity : Activity() {
         }
 
         if (
-            !SpeechRecognizer.isRecognitionAvailable(this)
+            !SpeechRecognizer.isRecognitionAvailable(
+                this
+            )
         ) {
 
             statusText.text =
@@ -194,7 +254,9 @@ class MainActivity : Activity() {
         recognizer?.destroy()
 
         recognizer =
-            SpeechRecognizer.createSpeechRecognizer(this)
+            SpeechRecognizer.createSpeechRecognizer(
+                this
+            )
 
         recognizer?.setRecognitionListener(
             object : RecognitionListener {
@@ -202,13 +264,11 @@ class MainActivity : Activity() {
                 override fun onReadyForSpeech(
                     params: Bundle?
                 ) {
-
                     statusText.text =
                         "🎤 آماده‌ام، صحبت کنید..."
                 }
 
                 override fun onBeginningOfSpeech() {
-
                     statusText.text =
                         "🎤 دارم گوش می‌کنم..."
                 }
@@ -224,7 +284,6 @@ class MainActivity : Activity() {
                 }
 
                 override fun onEndOfSpeech() {
-
                     statusText.text =
                         "🤖 در حال فکر کردن..."
                 }
@@ -452,11 +511,8 @@ class MainActivity : Activity() {
 
                 val responseStream =
                     if (responseCode in 200..299) {
-
                         connection.inputStream
-
                     } else {
-
                         connection.errorStream
                     }
 
@@ -530,9 +586,7 @@ class MainActivity : Activity() {
                 JSONObject(responseText)
 
             val direct =
-                json.optString(
-                    "output_text"
-                )
+                json.optString("output_text")
 
             if (direct.isNotBlank()) {
 
@@ -541,9 +595,7 @@ class MainActivity : Activity() {
             } else {
 
                 val output =
-                    json.optJSONArray(
-                        "output"
-                    )
+                    json.optJSONArray("output")
 
                 if (output == null) {
 
@@ -563,15 +615,14 @@ class MainActivity : Activity() {
                                 ?: continue
 
                         if (
-                            item.optString("type") != "message"
+                            item.optString("type")
+                            != "message"
                         ) {
                             continue
                         }
 
                         val content =
-                            item.optJSONArray(
-                                "content"
-                            )
+                            item.optJSONArray("content")
                                 ?: continue
 
                         for (
@@ -583,17 +634,14 @@ class MainActivity : Activity() {
                                     ?: continue
 
                             if (
-                                part.optString("type") == "output_text"
+                                part.optString("type")
+                                == "output_text"
                             ) {
 
                                 val text =
-                                    part.optString(
-                                        "text"
-                                    )
+                                    part.optString("text")
 
-                                if (
-                                    text.isNotBlank()
-                                ) {
+                                if (text.isNotBlank()) {
 
                                     result = text
                                     break
