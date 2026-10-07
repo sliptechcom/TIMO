@@ -22,7 +22,7 @@ import java.net.URL
 import java.util.Locale
 import kotlin.concurrent.thread
 
-class MainActivity : Activity { ()
+class MainActivity : Activity() {
 
     private lateinit var statusText: TextView
     private lateinit var conversationText: TextView
@@ -45,45 +45,55 @@ class MainActivity : Activity { ()
     private fun createInterface() {
 
         val root = LinearLayout(this)
+
         root.orientation = LinearLayout.VERTICAL
         root.gravity = Gravity.CENTER_HORIZONTAL
         root.setPadding(32, 32, 32, 32)
 
         val title = TextView(this)
+
         title.text = "TIMO"
         title.textSize = 42f
         title.gravity = Gravity.CENTER
 
         val subtitle = TextView(this)
+
         subtitle.text = "هوش مصنوعی شخصی شما"
         subtitle.textSize = 18f
         subtitle.gravity = Gravity.CENTER
 
         apiKeyEdit = EditText(this)
+
         apiKeyEdit.hint = "OpenAI API Key"
+
         apiKeyEdit.inputType =
             InputType.TYPE_CLASS_TEXT or
             InputType.TYPE_TEXT_VARIATION_PASSWORD
 
         talkButton = Button(this)
+
         talkButton.text = "🎤  صحبت با TIMO"
         talkButton.textSize = 18f
 
         val espButton = Button(this)
+
         espButton.text = "📡  وضعیت TIMO"
 
         statusText = TextView(this)
+
         statusText.text = "TIMO آماده است"
         statusText.textSize = 19f
         statusText.gravity = Gravity.CENTER
         statusText.setPadding(0, 20, 0, 20)
 
         conversationText = TextView(this)
+
         conversationText.text = ""
         conversationText.textSize = 19f
         conversationText.setPadding(10, 20, 10, 20)
 
         val scroll = ScrollView(this)
+
         scroll.addView(conversationText)
 
         root.addView(title)
@@ -120,7 +130,9 @@ class MainActivity : Activity { ()
             if (result == TextToSpeech.SUCCESS) {
 
                 val languageResult =
-                    tts?.setLanguage(Locale("fa", "IR"))
+                    tts?.setLanguage(
+                        Locale("fa", "IR")
+                    )
 
                 if (
                     languageResult ==
@@ -128,6 +140,7 @@ class MainActivity : Activity { ()
                     languageResult ==
                     TextToSpeech.LANG_NOT_SUPPORTED
                 ) {
+
                     statusText.text =
                         "صدای فارسی روی گوشی نصب نیست"
                 }
@@ -137,7 +150,9 @@ class MainActivity : Activity { ()
 
     private fun speak(text: String) {
 
-        if (text.isBlank()) return
+        if (text.isBlank()) {
+            return
+        }
 
         tts?.speak(
             text,
@@ -156,7 +171,9 @@ class MainActivity : Activity { ()
         ) {
 
             requestPermissions(
-                arrayOf(Manifest.permission.RECORD_AUDIO),
+                arrayOf(
+                    Manifest.permission.RECORD_AUDIO
+                ),
                 100
             )
         }
@@ -169,22 +186,29 @@ class MainActivity : Activity { ()
                 Manifest.permission.RECORD_AUDIO
             ) != PackageManager.PERMISSION_GRANTED
         ) {
+
             requestMicrophonePermission()
             return
         }
 
         if (
-            !SpeechRecognizer.isRecognitionAvailable(this)
+            !SpeechRecognizer.isRecognitionAvailable(
+                this
+            )
         ) {
+
             statusText.text =
                 "سرویس تشخیص صدا در گوشی موجود نیست"
+
             return
         }
 
         recognizer?.destroy()
 
         recognizer =
-            SpeechRecognizer.createSpeechRecognizer(this)
+            SpeechRecognizer.createSpeechRecognizer(
+                this
+            )
 
         recognizer?.setRecognitionListener(
             object : RecognitionListener {
@@ -192,11 +216,13 @@ class MainActivity : Activity { ()
                 override fun onReadyForSpeech(
                     params: Bundle?
                 ) {
+
                     statusText.text =
                         "🎤 آماده‌ام، صحبت کنید..."
                 }
 
                 override fun onBeginningOfSpeech() {
+
                     statusText.text =
                         "🎤 دارم گوش می‌کنم..."
                 }
@@ -212,11 +238,14 @@ class MainActivity : Activity { ()
                 }
 
                 override fun onEndOfSpeech() {
+
                     statusText.text =
                         "🤖 در حال فکر کردن..."
                 }
 
-                override fun onError(error: Int) {
+                override fun onError(
+                    error: Int
+                ) {
 
                     statusText.text =
                         speechError(error)
@@ -294,7 +323,9 @@ class MainActivity : Activity { ()
         recognizer?.startListening(intent)
     }
 
-    private fun speechError(error: Int): String {
+    private fun speechError(
+        error: Int
+    ): String {
 
         return when (error) {
 
@@ -330,7 +361,9 @@ class MainActivity : Activity { ()
         }
     }
 
-    private fun askOpenAI(question: String) {
+    private fun askOpenAI(
+        question: String
+    ) {
 
         val key =
             apiKeyEdit.text
@@ -368,6 +401,7 @@ class MainActivity : Activity { ()
                 connection.requestMethod = "POST"
 
                 connection.connectTimeout = 15000
+
                 connection.readTimeout = 60000
 
                 connection.doOutput = true
@@ -424,7 +458,9 @@ class MainActivity : Activity { ()
                     output.write(
                         request
                             .toString()
-                            .toByteArray(Charsets.UTF_8)
+                            .toByteArray(
+                                Charsets.UTF_8
+                            )
                     )
                 }
 
@@ -433,8 +469,11 @@ class MainActivity : Activity { ()
 
                 val responseStream =
                     if (responseCode in 200..299) {
+
                         connection.inputStream
+
                     } else {
+
                         connection.errorStream
                     }
 
@@ -507,23 +546,33 @@ class MainActivity : Activity { ()
                 JSONObject(responseText)
 
             val direct =
-                json.optString("output_text")
+                json.optString(
+                    "output_text"
+                )
 
             if (direct.isNotBlank()) {
+
                 direct
+
             } else {
 
                 val output =
-                    json.optJSONArray("output")
+                    json.optJSONArray(
+                        "output"
+                    )
 
                 if (output == null) {
+
                     "پاسخی دریافت نشد."
+
                 } else {
 
                     var result =
                         "پاسخ متنی دریافت نشد."
 
-                    for (i in 0 until output.length()) {
+                    for (
+                        i in 0 until output.length()
+                    ) {
 
                         val item =
                             output.optJSONObject(i)
@@ -537,7 +586,9 @@ class MainActivity : Activity { ()
                         }
 
                         val content =
-                            item.optJSONArray("content")
+                            item.optJSONArray(
+                                "content"
+                            )
                                 ?: continue
 
                         for (
@@ -554,9 +605,14 @@ class MainActivity : Activity { ()
                             ) {
 
                                 val text =
-                                    part.optString("text")
+                                    part.optString(
+                                        "text"
+                                    )
 
-                                if (text.isNotBlank()) {
+                                if (
+                                    text.isNotBlank()
+                                ) {
+
                                     result = text
                                     break
                                 }
@@ -591,13 +647,16 @@ class MainActivity : Activity { ()
             try {
 
                 val url =
-                    URL("http://$esp32Ip/")
+                    URL(
+                        "http://$esp32Ip/"
+                    )
 
                 val connection =
                     url.openConnection()
                         as HttpURLConnection
 
                 connection.connectTimeout = 3000
+
                 connection.readTimeout = 3000
 
                 val code =
