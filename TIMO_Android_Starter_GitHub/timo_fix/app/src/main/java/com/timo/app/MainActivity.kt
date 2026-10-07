@@ -6,11 +6,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.text.InputType
 import android.view.Gravity
 import android.widget.Button
@@ -19,6 +21,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
@@ -33,8 +36,11 @@ class MainActivity : Activity() {
 
     private var tts: TextToSpeech? = null
     private var recognizer: SpeechRecognizer? = null
+    private var mediaPlayer: MediaPlayer? = null
 
     private val esp32Ip = "192.168.1.102"
+
+    private var ttsReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,40 +63,49 @@ class MainActivity : Activity() {
         root.setPadding(32, 32, 32, 32)
 
         val title = TextView(this)
+
         title.text = "TIMO"
         title.textSize = 42f
         title.gravity = Gravity.CENTER
 
         val subtitle = TextView(this)
+
         subtitle.text = "هوش مصنوعی شخصی شما"
         subtitle.textSize = 18f
         subtitle.gravity = Gravity.CENTER
 
         apiKeyEdit = EditText(this)
+
         apiKeyEdit.hint = "OpenAI API Key"
+
         apiKeyEdit.inputType =
             InputType.TYPE_CLASS_TEXT or
             InputType.TYPE_TEXT_VARIATION_PASSWORD
 
         talkButton = Button(this)
+
         talkButton.text = "🎤  صحبت با TIMO"
         talkButton.textSize = 18f
 
         val espButton = Button(this)
+
         espButton.text = "📡  وضعیت TIMO"
 
         statusText = TextView(this)
+
         statusText.text = "TIMO در حال آماده شدن..."
         statusText.textSize = 19f
         statusText.gravity = Gravity.CENTER
         statusText.setPadding(0, 20, 0, 20)
 
         conversationText = TextView(this)
+
         conversationText.text = ""
         conversationText.textSize = 19f
         conversationText.setPadding(10, 20, 10, 20)
 
         val scroll = ScrollView(this)
+
         scroll.addView(conversationText)
 
         root.addView(title)
@@ -121,7 +136,7 @@ class MainActivity : Activity() {
     }
 
     // =========================================================
-    // TEXT TO SPEECH
+    // TTS INITIALIZATION
     // =========================================================
 
     private fun initializeTts() {
@@ -145,25 +160,48 @@ class MainActivity : Activity() {
                                 .build()
                         )
 
-                        val resultFaIr =
+                        var languageResult =
                             tts?.setLanguage(
                                 Locale("fa", "IR")
                             )
 
                         if (
-                            resultFaIr ==
+                            languageResult ==
                             TextToSpeech.LANG_MISSING_DATA ||
-                            resultFaIr ==
+                            languageResult ==
                             TextToSpeech.LANG_NOT_SUPPORTED
                         ) {
 
-                            tts?.setLanguage(
-                                Locale("fa")
-                            )
+                            languageResult =
+                                tts?.setLanguage(
+                                    Locale("fa")
+                                )
                         }
 
                         tts?.setSpeechRate(0.95f)
                         tts?.setPitch(1.0f)
+
+                        tts?.setOnUtteranceProgressListener(
+                            object : UtteranceProgressListener() {
+
+                                override fun onStart(
+                                    utteranceId: String?
+                                ) {
+                                }
+
+                                override fun onDone(
+                                    utteranceId: String?
+                                ) {
+                                }
+
+                                override fun onError(
+                                    utteranceId: String?
+                                ) {
+                                }
+                            }
+                        )
+
+                        ttsReady = true
 
                         runOnUiThread {
 
@@ -173,6 +211,8 @@ class MainActivity : Activity() {
 
                     } catch (e: Exception) {
 
+                        ttsReady = false
+
                         runOnUiThread {
 
                             statusText.text =
@@ -181,6 +221,8 @@ class MainActivity : Activity() {
                     }
 
                 } else {
+
+                    ttsReady = false
 
                     runOnUiThread {
 
@@ -193,108 +235,254 @@ class MainActivity : Activity() {
         )
     }
 
+    // =========================================================
+    // FINAL AUDIO SYSTEM
+    //
+    // TIMO:
+    // Persian text
+    //      ↓
+    // Samsung TTS
+    //      ↓
+    // WAV file
+    //      ↓
+    // MediaPlayer
+    //      ↓
+    // Phone speaker / audio output
+    // =========================================================
+
     private fun speak(text: String) {
 
         if (text.isBlank()) {
             return
         }
 
-        val speech = text.trim()
+        if (!ttsReady || tts == null) {
 
-        runOnUiThread {
+            runOnUiThread {
 
-            try {
+                statusText.text =
+                    "موتور صدای TIMO آماده نیست"
+            }
 
-                val audioManager =
-                    getSystemService(
-                        AUDIO_SERVICE
-                    ) as AudioManager
+            return
+        }
 
-                // اطمینان از اینکه صدای Media قطع نیست
-                if (
-                    audioManager.getStreamVolume(
-                        AudioManager.STREAM_MUSIC
-                    ) == 0
+        val cleanText =
+            text
+                .replace("*", "")
+                .replace("#", "")
+                .replace("`", "")
+                .trim()
+
+        val audioFile =
+            File(
+                cacheDir,
+                "timo_reply.wav"
+            )
+
+        try {
+
+            if (audioFile.exists()) {
+                audioFile.delete()
+            }
+
+        } catch (_: Exception) {
+        }
+
+        val utteranceId =
+            "TIMO_AUDIO_${System.currentTimeMillis()}"
+
+        tts?.setOnUtteranceProgressListener(
+            object : UtteranceProgressListener() {
+
+                override fun onStart(
+                    id: String?
                 ) {
-
-                    statusText.text =
-                        "🔊 صدای گوشی روی صفر است"
                 }
 
-                tts?.stop()
+                override fun onDone(
+                    id: String?
+                ) {
 
-                // تنظیم خروجی صدا روی Media
-                tts?.setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(
-                            AudioAttributes.USAGE_MEDIA
+                    if (id != utteranceId) {
+                        return
+                    }
+
+                    runOnUiThread {
+
+                        playTimoAudio(
+                            audioFile
                         )
-                        .setContentType(
-                            AudioAttributes.CONTENT_TYPE_SPEECH
-                        )
-                        .build()
+                    }
+                }
+
+                override fun onError(
+                    id: String?
+                ) {
+
+                    if (id != utteranceId) {
+                        return
+                    }
+
+                    runOnUiThread {
+
+                        statusText.text =
+                            "خطا در ساخت صدای TIMO"
+                    }
+                }
+            }
+        )
+
+        try {
+
+            val params =
+                Bundle()
+
+            params.putInt(
+                TextToSpeech.Engine.KEY_PARAM_STREAM,
+                AudioManager.STREAM_MUSIC
+            )
+
+            val result =
+                tts?.synthesizeToFile(
+                    cleanText,
+                    params,
+                    audioFile,
+                    utteranceId
                 )
 
-                // دوباره زبان فارسی را تنظیم می‌کنیم
-                val language =
-                    tts?.setLanguage(
-                        Locale("fa", "IR")
-                    )
+            if (result != TextToSpeech.SUCCESS) {
 
-                if (
-                    language ==
-                    TextToSpeech.LANG_MISSING_DATA ||
-                    language ==
-                    TextToSpeech.LANG_NOT_SUPPORTED
-                ) {
+                statusText.text =
+                    "TTS نتوانست صدای TIMO را بسازد"
+            } else {
 
-                    tts?.setLanguage(
-                        Locale("fa")
-                    )
-                }
+                statusText.text =
+                    "🔊 در حال آماده‌سازی صدای TIMO..."
+            }
 
-                tts?.setSpeechRate(0.95f)
-                tts?.setPitch(1.0f)
+        } catch (e: Exception) {
 
-                val params = Bundle()
+            runOnUiThread {
 
-                params.putInt(
-                    TextToSpeech.Engine.KEY_PARAM_STREAM,
+                statusText.text =
+                    "خطای ساخت صدا: ${e.message}"
+            }
+        }
+    }
+
+    // =========================================================
+    // PLAY GENERATED AUDIO
+    // =========================================================
+
+    private fun playTimoAudio(
+        file: File
+    ) {
+
+        if (!file.exists()) {
+
+            statusText.text =
+                "فایل صدای TIMO ساخته نشد"
+
+            return
+        }
+
+        try {
+
+            mediaPlayer?.stop()
+
+        } catch (_: Exception) {
+        }
+
+        try {
+
+            mediaPlayer?.release()
+
+        } catch (_: Exception) {
+        }
+
+        mediaPlayer = null
+
+        try {
+
+            val audioManager =
+                getSystemService(
+                    AUDIO_SERVICE
+                ) as AudioManager
+
+            val volume =
+                audioManager.getStreamVolume(
                     AudioManager.STREAM_MUSIC
                 )
 
-                params.putFloat(
-                    TextToSpeech.Engine.KEY_PARAM_VOLUME,
-                    1.0f
-                )
-
-                val result =
-                    tts?.speak(
-                        speech,
-                        TextToSpeech.QUEUE_FLUSH,
-                        params,
-                        "TIMO_REPLY"
-                    )
-
-                if (
-                    result ==
-                    TextToSpeech.SUCCESS
-                ) {
-
-                    statusText.text =
-                        "🔊 TIMO در حال صحبت است..."
-
-                } else {
-
-                    statusText.text =
-                        "خطا در ارسال صدا به TTS"
-                }
-
-            } catch (e: Exception) {
+            if (volume == 0) {
 
                 statusText.text =
-                    "خطای صدای TIMO: ${e.message}"
+                    "🔊 صدای Media گوشی صفر است"
+
+                return
             }
+
+            val player =
+                MediaPlayer()
+
+            mediaPlayer = player
+
+            player.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(
+                        AudioAttributes.USAGE_MEDIA
+                    )
+                    .setContentType(
+                        AudioAttributes.CONTENT_TYPE_SPEECH
+                    )
+                    .build()
+            )
+
+            player.setDataSource(
+                file.absolutePath
+            )
+
+            player.setOnPreparedListener {
+
+                statusText.text =
+                    "🔊 TIMO در حال صحبت است..."
+
+                it.start()
+            }
+
+            player.setOnCompletionListener {
+
+                statusText.text =
+                    "TIMO ONLINE ✓"
+
+                it.release()
+
+                if (mediaPlayer == it) {
+                    mediaPlayer = null
+                }
+            }
+
+            player.setOnErrorListener { mp, _, _ ->
+
+                statusText.text =
+                    "خطا در پخش صدای TIMO"
+
+                mp.release()
+
+                if (mediaPlayer == mp) {
+                    mediaPlayer = null
+                }
+
+                true
+            }
+
+            player.prepareAsync()
+
+        } catch (e: Exception) {
+
+            statusText.text =
+                "خطای پخش صدا: ${e.message}"
         }
     }
 
@@ -668,7 +856,6 @@ class MainActivity : Activity() {
                     conversationText.text =
                         "شما:\n$question\n\nTIMO:\n$reply"
 
-                    // پاسخ را با صدای TIMO پخش کن
                     speak(reply)
                 }
 
@@ -894,6 +1081,18 @@ class MainActivity : Activity() {
 
         recognizer?.destroy()
         recognizer = null
+
+        try {
+            mediaPlayer?.stop()
+        } catch (_: Exception) {
+        }
+
+        try {
+            mediaPlayer?.release()
+        } catch (_: Exception) {
+        }
+
+        mediaPlayer = null
 
         tts?.stop()
         tts?.shutdown()
