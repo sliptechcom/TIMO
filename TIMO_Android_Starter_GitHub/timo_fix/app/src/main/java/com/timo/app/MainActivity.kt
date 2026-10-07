@@ -5,12 +5,12 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
-import android.media.AudioManager
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.text.InputType
 import android.view.Gravity
 import android.widget.Button
@@ -54,7 +54,6 @@ class MainActivity : Activity() {
     private fun createInterface() {
 
         val root = LinearLayout(this)
-
         root.orientation = LinearLayout.VERTICAL
         root.gravity = Gravity.CENTER_HORIZONTAL
         root.setPadding(32, 32, 32, 32)
@@ -86,7 +85,7 @@ class MainActivity : Activity() {
         espButton.textSize = 18f
 
         statusText = TextView(this)
-        statusText.text = "TIMO آماده است"
+        statusText.text = "TIMO در حال آماده‌سازی..."
         statusText.textSize = 19f
         statusText.gravity = Gravity.CENTER
         statusText.setPadding(0, 20, 0, 20)
@@ -127,13 +126,18 @@ class MainActivity : Activity() {
     }
 
     // ============================================================
-    // TTS
+    // TTS - FINAL VERSION
     // ============================================================
 
     private fun initializeTts() {
 
         ttsReady = false
 
+        /*
+         * از همان موتور TTS پیش‌فرض گوشی استفاده می‌کنیم.
+         * چون کاربر قبلاً در تنظیمات سامسونگ صدای TTS را تست کرده
+         * و صدای Samsung TTS سالم است.
+         */
         tts = TextToSpeech(this) { result ->
 
             if (result != TextToSpeech.SUCCESS) {
@@ -142,28 +146,18 @@ class MainActivity : Activity() {
 
                 runOnUiThread {
                     statusText.text =
-                        "❌ خطا در راه‌اندازی صدای TIMO"
+                        "❌ راه‌اندازی صدای TIMO ناموفق بود"
                 }
 
                 return@TextToSpeech
             }
 
-            val engine = tts
+            val engine = tts ?: return@TextToSpeech
 
-            if (engine == null) {
+            // ----------------------------------------------------
+            // مسیر صوتی: MEDIA / SPEECH
+            // ----------------------------------------------------
 
-                ttsReady = false
-
-                runOnUiThread {
-                    statusText.text =
-                        "❌ موتور صدای TIMO پیدا نشد"
-                }
-
-                return@TextToSpeech
-            }
-
-            // مسیر خروجی صدا:
-            // Media / Speech
             engine.setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -173,41 +167,105 @@ class MainActivity : Activity() {
                     .build()
             )
 
-            // فارسی
-            val languageResult =
-                engine.setLanguage(
-                    Locale("fa", "IR")
-                )
+            // ----------------------------------------------------
+            // ابتدا زبان پیش‌فرض گوشی
+            // ----------------------------------------------------
 
+            val systemLocale = Locale.getDefault()
+
+            var languageResult =
+                engine.setLanguage(systemLocale)
+
+            /*
+             * اگر زبان پیش‌فرض مناسب نبود، فارسی را امتحان کن.
+             */
             if (
                 languageResult == TextToSpeech.LANG_MISSING_DATA ||
                 languageResult == TextToSpeech.LANG_NOT_SUPPORTED
             ) {
 
-                ttsReady = false
-
-                runOnUiThread {
-                    statusText.text =
-                        "❌ صدای فارسی روی گوشی نصب نیست"
-                }
-
-                return@TextToSpeech
+                languageResult =
+                    engine.setLanguage(
+                        Locale("fa", "IR")
+                    )
             }
 
-            // سرعت طبیعی‌تر
+            /*
+             * اگر فارسی هم موجود نبود، مهم نیست:
+             * TTS را آماده نگه می‌داریم و اجازه می‌دهیم
+             * موتور فعال گوشی با زبان پیش‌فرض خودش صحبت کند.
+             *
+             * این قسمت عمداً باعث گیر کردن TIMO نمی‌شود.
+             */
+            if (
+                languageResult == TextToSpeech.LANG_MISSING_DATA ||
+                languageResult == TextToSpeech.LANG_NOT_SUPPORTED
+            ) {
+
+                engine.setLanguage(systemLocale)
+            }
+
+            // سرعت طبیعی
             engine.setSpeechRate(0.95f)
 
-            // زیر و بم طبیعی
+            // Pitch طبیعی
             engine.setPitch(1.0f)
+
+            // ----------------------------------------------------
+            // بسیار مهم:
+            // Listener باید قبل از speak ثبت شود.
+            // ----------------------------------------------------
+
+            engine.setOnUtteranceProgressListener(
+                object : UtteranceProgressListener() {
+
+                    override fun onStart(
+                        utteranceId: String?
+                    ) {
+
+                        runOnUiThread {
+                            statusText.text =
+                                "🔊 TIMO در حال صحبت است..."
+                        }
+                    }
+
+                    override fun onDone(
+                        utteranceId: String?
+                    ) {
+
+                        runOnUiThread {
+                            statusText.text =
+                                "TIMO ONLINE ✓"
+                        }
+                    }
+
+                    override fun onError(
+                        utteranceId: String?
+                    ) {
+
+                        runOnUiThread {
+                            statusText.text =
+                                "❌ خطا در پخش صدای TIMO"
+                        }
+                    }
+                }
+            )
+
+            // ----------------------------------------------------
+            // TTS آماده است
+            // ----------------------------------------------------
 
             ttsReady = true
 
             runOnUiThread {
-                statusText.text = "TIMO آماده است 🔊"
+                statusText.text =
+                    "TIMO ONLINE ✓"
             }
 
-            // اگر در زمان آماده‌شدن TTS،
-            // جواب OpenAI رسیده بود، حالا پخش کن.
+            /*
+             * اگر OpenAI قبل از آماده‌شدن TTS جواب داده بود،
+             * حالا همان جواب را پخش کن.
+             */
             val waitingText = pendingSpeech
 
             pendingSpeech = null
@@ -217,6 +275,10 @@ class MainActivity : Activity() {
             }
         }
     }
+
+    // ============================================================
+    // SPEAK
+    // ============================================================
 
     private fun speak(text: String) {
 
@@ -231,8 +293,9 @@ class MainActivity : Activity() {
             return
         }
 
-        // اگر TTS هنوز آماده نشده،
-        // پاسخ را نگه می‌داریم.
+        /*
+         * اگر TTS هنوز آماده نیست، جواب را نگه می‌داریم.
+         */
         if (!ttsReady || tts == null) {
 
             pendingSpeech = cleanText
@@ -245,17 +308,23 @@ class MainActivity : Activity() {
             return
         }
 
+        val engine = tts ?: return
+
         runOnUiThread {
             statusText.text =
                 "🔊 TIMO در حال صحبت است..."
         }
 
-        val engine = tts ?: return
-
-        // صدای قبلی را متوقف کن.
+        // صدای قبلی را متوقف کن
         engine.stop()
 
-        // پخش پاسخ جدید
+        /*
+         * پاسخ را مستقیماً از TTS پخش کن.
+         *
+         * هیچ WAV
+         * هیچ MediaPlayer
+         * هیچ فایل موقت
+         */
         val result = engine.speak(
             cleanText,
             TextToSpeech.QUEUE_FLUSH,
@@ -267,44 +336,9 @@ class MainActivity : Activity() {
 
             runOnUiThread {
                 statusText.text =
-                    "❌ خطا در پخش صدای TIMO"
+                    "❌ TTS نتوانست صدا را پخش کند"
             }
-
-            return
         }
-
-        // بعد از پایان صحبت
-        engine.setOnUtteranceProgressListener(
-            object : android.speech.tts.UtteranceProgressListener() {
-
-                override fun onStart(
-                    utteranceId: String?
-                ) {
-                    runOnUiThread {
-                        statusText.text =
-                            "🔊 TIMO در حال صحبت است..."
-                    }
-                }
-
-                override fun onDone(
-                    utteranceId: String?
-                ) {
-                    runOnUiThread {
-                        statusText.text =
-                            "TIMO ONLINE ✓"
-                    }
-                }
-
-                override fun onError(
-                    utteranceId: String?
-                ) {
-                    runOnUiThread {
-                        statusText.text =
-                            "❌ خطا در صدای TIMO"
-                    }
-                }
-            }
-        )
     }
 
     // ============================================================
@@ -563,7 +597,6 @@ class MainActivity : Activity() {
                 connection.requestMethod = "POST"
 
                 connection.connectTimeout = 15000
-
                 connection.readTimeout = 60000
 
                 connection.doOutput = true
@@ -631,9 +664,7 @@ class MainActivity : Activity() {
                     connection.responseCode
 
                 val responseStream =
-                    if (
-                        responseCode in 200..299
-                    ) {
+                    if (responseCode in 200..299) {
                         connection.inputStream
                     } else {
                         connection.errorStream
@@ -646,9 +677,7 @@ class MainActivity : Activity() {
                             it.readText()
                         }
 
-                if (
-                    responseCode !in 200..299
-                ) {
+                if (responseCode !in 200..299) {
 
                     runOnUiThread {
 
@@ -671,14 +700,12 @@ class MainActivity : Activity() {
 
                     talkButton.isEnabled = true
 
-                    statusText.text =
-                        "TIMO ONLINE ✓"
-
                     conversationText.text =
                         "شما:\n$question\n\nTIMO:\n$reply"
 
-                    // اینجا پاسخ OpenAI
-                    // مستقیماً وارد TTS می‌شود.
+                    /*
+                     * پاسخ OpenAI مستقیماً به TTS.
+                     */
                     speak(reply)
                 }
 
@@ -779,9 +806,7 @@ class MainActivity : Activity() {
                                         "text"
                                     )
 
-                                if (
-                                    text.isNotBlank()
-                                ) {
+                                if (text.isNotBlank()) {
 
                                     result = text
                                     break
@@ -801,16 +826,14 @@ class MainActivity : Activity() {
                 }
             }
 
-        } catch (
-            e: Exception
-        ) {
+        } catch (e: Exception) {
 
             "خطا در خواندن پاسخ TIMO."
         }
     }
 
     // ============================================================
-    // ESP32 STATUS
+    // ESP32
     // ============================================================
 
     private fun checkEsp32() {
@@ -853,9 +876,7 @@ class MainActivity : Activity() {
                     }
                 }
 
-            } catch (
-                e: Exception
-            ) {
+            } catch (e: Exception) {
 
                 runOnUiThread {
 
