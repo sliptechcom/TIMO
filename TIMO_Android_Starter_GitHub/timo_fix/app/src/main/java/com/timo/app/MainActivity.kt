@@ -22,7 +22,7 @@ import java.net.URL
 import java.util.Locale
 import kotlin.concurrent.thread
 
-class MainActivity : Activity {
+class MainActivity : Activity { ()
 
     private lateinit var statusText: TextView
     private lateinit var conversationText: TextView
