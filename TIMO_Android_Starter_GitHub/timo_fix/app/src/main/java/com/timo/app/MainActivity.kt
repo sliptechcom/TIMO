@@ -6,12 +6,12 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.view.Gravity
 import android.widget.Button
 import android.widget.EditText
@@ -19,7 +19,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import org.json.JSONObject
-import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
@@ -30,18 +30,16 @@ import kotlin.concurrent.thread
 class MainActivity : Activity() {
 
     // =========================================================
-    // تنظیمات TIMO
+    // SETTINGS
     // =========================================================
 
     private val ESP32_URL = "http://192.168.1.102"
 
-    /*
-     * کلید API خودت را همین‌جا قرار بده.
-     * کلید قبلی خودت را دوباره وارد کن.
-     */
-    private val OPENAI_API_KEY = "YOUR_OPENAI_API_KEY"
+    private val OPENAI_API_KEY =
+        "YOUR_OPENAI_API_KEY"
 
-    private val OPENAI_MODEL = "gpt-6-luna"
+    private val OPENAI_MODEL =
+        "gpt-6-luna"
 
 
     // =========================================================
@@ -56,7 +54,7 @@ class MainActivity : Activity() {
 
 
     // =========================================================
-    // Speech Recognition
+    // SPEECH RECOGNITION
     // =========================================================
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -64,7 +62,7 @@ class MainActivity : Activity() {
 
 
     // =========================================================
-    // Text To Speech
+    // TTS
     // =========================================================
 
     private var tts: TextToSpeech? = null
@@ -73,10 +71,11 @@ class MainActivity : Activity() {
 
 
     // =========================================================
-    // Audio
+    // AUDIO PLAYER
     // =========================================================
 
-    private lateinit var audioManager: AudioManager
+    private var mediaPlayer: MediaPlayer? = null
+    private var audioFile: File? = null
 
 
     // =========================================================
@@ -85,9 +84,6 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        audioManager =
-            getSystemService(AUDIO_SERVICE) as AudioManager
 
         createInterface()
 
@@ -102,14 +98,15 @@ class MainActivity : Activity() {
 
 
     // =========================================================
-    // ساخت رابط کاربری
+    // UI
     // =========================================================
 
     private fun createInterface() {
 
         val root = LinearLayout(this)
 
-        root.orientation = LinearLayout.VERTICAL
+        root.orientation =
+            LinearLayout.VERTICAL
 
         root.setPadding(
             24,
@@ -118,9 +115,8 @@ class MainActivity : Activity() {
             24
         )
 
-        // -----------------------------------------------------
-        // وضعیت
-        // -----------------------------------------------------
+
+        // STATUS
 
         statusText = TextView(this)
 
@@ -145,9 +141,7 @@ class MainActivity : Activity() {
         )
 
 
-        // -----------------------------------------------------
-        // مکالمه
-        // -----------------------------------------------------
+        // CONVERSATION
 
         conversationText = TextView(this)
 
@@ -160,9 +154,12 @@ class MainActivity : Activity() {
             20
         )
 
-        val scroll = ScrollView(this)
+        val scroll =
+            ScrollView(this)
 
-        scroll.addView(conversationText)
+        scroll.addView(
+            conversationText
+        )
 
         root.addView(
             scroll,
@@ -174,9 +171,7 @@ class MainActivity : Activity() {
         )
 
 
-        // -----------------------------------------------------
-        // ورودی متن
-        // -----------------------------------------------------
+        // INPUT
 
         inputText = EditText(this)
 
@@ -194,18 +189,19 @@ class MainActivity : Activity() {
         )
 
 
-        // -----------------------------------------------------
-        // دکمه ارسال
-        // -----------------------------------------------------
+        // SEND
 
         sendButton = Button(this)
 
-        sendButton.text = "ارسال"
+        sendButton.text =
+            "ارسال"
 
         sendButton.setOnClickListener {
 
             val message =
-                inputText.text.toString().trim()
+                inputText.text
+                    .toString()
+                    .trim()
 
             if (message.isNotEmpty()) {
 
@@ -224,9 +220,7 @@ class MainActivity : Activity() {
         )
 
 
-        // -----------------------------------------------------
-        // دکمه میکروفون
-        // -----------------------------------------------------
+        // MICROPHONE
 
         micButton = Button(this)
 
@@ -236,8 +230,11 @@ class MainActivity : Activity() {
         micButton.setOnClickListener {
 
             if (listening) {
+
                 stopListening()
+
             } else {
+
                 startListening()
             }
         }
@@ -251,61 +248,277 @@ class MainActivity : Activity() {
         )
 
 
-        root.gravity = Gravity.CENTER
+        root.gravity =
+            Gravity.CENTER
+
 
         setContentView(root)
     }
 
 
     // =========================================================
-    // TTS
+    // TTS INITIALIZATION
     // =========================================================
 
     private fun initializeTTS() {
 
-        tts = TextToSpeech(
-            this
-        ) { result ->
+        tts =
+            TextToSpeech(this) { result ->
 
-            if (result != TextToSpeech.SUCCESS) {
+                if (
+                    result !=
+                    TextToSpeech.SUCCESS
+                ) {
 
-                runOnUiThread {
-                    statusText.text =
-                        "❌ خطا در راه‌اندازی صدای TIMO"
+                    runOnUiThread {
+
+                        statusText.text =
+                            "❌ خطا در TTS"
+                    }
+
+                    return@TextToSpeech
                 }
 
-                return@TextToSpeech
-            }
+
+                val engine =
+                    tts ?: return@TextToSpeech
 
 
-            val engine = tts ?: return@TextToSpeech
+                // فارسی
+
+                val resultFa =
+                    engine.setLanguage(
+                        Locale("fa", "IR")
+                    )
 
 
-            // -------------------------------------------------
-            // زبان
-            // -------------------------------------------------
+                if (
+                    resultFa ==
+                    TextToSpeech.LANG_MISSING_DATA ||
+                    resultFa ==
+                    TextToSpeech.LANG_NOT_SUPPORTED
+                ) {
 
-            var language =
-                engine.setLanguage(
-                    Locale("fa", "IR")
+                    engine.setLanguage(
+                        Locale.getDefault()
+                    )
+                }
+
+
+                /*
+                 * صدای گفتار را با کیفیت مناسب تنظیم می‌کنیم.
+                 */
+
+                engine.setSpeechRate(
+                    0.95f
                 )
 
-            if (
-                language == TextToSpeech.LANG_MISSING_DATA ||
-                language == TextToSpeech.LANG_NOT_SUPPORTED
-            ) {
-
-                engine.setLanguage(
-                    Locale.getDefault()
+                engine.setPitch(
+                    1.0f
                 )
+
+
+                ttsReady = true
+
+
+                runOnUiThread {
+
+                    statusText.text =
+                        "🟢 TIMO آماده است"
+
+
+                    val pending =
+                        pendingSpeech
+
+                    pendingSpeech =
+                        null
+
+
+                    if (
+                        !pending.isNullOrBlank()
+                    ) {
+
+                        speak(pending)
+                    }
+                }
             }
+    }
 
 
-            // -------------------------------------------------
-            // Audio Attributes
-            // -------------------------------------------------
+    // =========================================================
+    // SPEAK
+    //
+    // مهم:
+    // اینجا دیگر TTS مستقیماً صدا را پخش نمی‌کند.
+    //
+    // TTS -> WAV -> MediaPlayer -> Speaker
+    // =========================================================
 
-            engine.setAudioAttributes(
+    private fun speak(text: String) {
+
+        val cleanText =
+            text
+                .replace("*", "")
+                .replace("#", "")
+                .replace("`", "")
+                .replace("_", "")
+                .trim()
+
+
+        if (cleanText.isBlank()) {
+            return
+        }
+
+
+        if (
+            !ttsReady ||
+            tts == null
+        ) {
+
+            pendingSpeech =
+                cleanText
+
+            statusText.text =
+                "🔊 آماده‌سازی صدا..."
+
+            return
+        }
+
+
+        /*
+         * صدای قبلی را قطع کن.
+         */
+
+        stopAudio()
+
+
+        statusText.text =
+            "🔊 TIMO در حال ساخت صدا..."
+
+
+        /*
+         * فایل صوتی موقت.
+         */
+
+        val file =
+            File(
+                cacheDir,
+                "timo_voice.wav"
+            )
+
+
+        if (file.exists()) {
+            file.delete()
+        }
+
+
+        audioFile = file
+
+
+        /*
+         * وقتی TTS ساخت فایل را تمام کرد،
+         * MediaPlayer آن را پخش می‌کند.
+         */
+
+        tts?.setOnUtteranceProgressListener(
+
+            object :
+                android.speech.tts.UtteranceProgressListener() {
+
+                override fun onStart(
+                    utteranceId: String?
+                ) {
+                }
+
+
+                override fun onDone(
+                    utteranceId: String?
+                ) {
+
+                    runOnUiThread {
+
+                        playAudioFile(file)
+                    }
+                }
+
+
+                override fun onError(
+                    utteranceId: String?
+                ) {
+
+                    runOnUiThread {
+
+                        statusText.text =
+                            "❌ ساخت صدای TIMO ناموفق بود"
+                    }
+                }
+            }
+        )
+
+
+        val params =
+            Bundle()
+
+
+        /*
+         * ساخت فایل WAV
+         */
+
+        val result =
+            tts?.synthesizeToFile(
+                cleanText,
+                params,
+                file,
+                "TIMO_WAV"
+            )
+
+
+        if (
+            result !=
+            TextToSpeech.SUCCESS
+        ) {
+
+            statusText.text =
+                "❌ TTS نتوانست فایل صدا بسازد"
+        }
+    }
+
+
+    // =========================================================
+    // PLAY AUDIO FILE
+    // =========================================================
+
+    private fun playAudioFile(
+        file: File
+    ) {
+
+        if (!file.exists()) {
+
+            statusText.text =
+                "❌ فایل صدای TIMO ساخته نشد"
+
+            return
+        }
+
+
+        stopAudio()
+
+
+        try {
+
+            val player =
+                MediaPlayer()
+
+
+            mediaPlayer =
+                player
+
+
+            /*
+             * خروجی صدا = MEDIA
+             */
+
+            player.setAudioAttributes(
 
                 AudioAttributes.Builder()
 
@@ -321,164 +534,112 @@ class MainActivity : Activity() {
             )
 
 
-            // -------------------------------------------------
-            // Listener
-            // -------------------------------------------------
-
-            engine.setOnUtteranceProgressListener(
-
-                object : UtteranceProgressListener() {
-
-                    override fun onStart(
-                        utteranceId: String?
-                    ) {
-
-                        runOnUiThread {
-
-                            statusText.text =
-                                "🔊 TIMO در حال صحبت است..."
-                        }
-                    }
-
-
-                    override fun onDone(
-                        utteranceId: String?
-                    ) {
-
-                        runOnUiThread {
-
-                            statusText.text =
-                                "🟢 TIMO آماده است"
-                        }
-                    }
-
-
-                    override fun onError(
-                        utteranceId: String?
-                    ) {
-
-                        runOnUiThread {
-
-                            statusText.text =
-                                "❌ خطا در پخش صدا"
-                        }
-                    }
-                }
+            player.setDataSource(
+                file.absolutePath
             )
 
 
-            ttsReady = true
+            player.setOnPreparedListener {
+
+                /*
+                 * صدای Media را روی حداکثر سطح
+                 * نرم‌افزاری خود Player قرار بده.
+                 */
+
+                it.setVolume(
+                    1.0f,
+                    1.0f
+                )
 
 
-            runOnUiThread {
+                statusText.text =
+                    "🔊 TIMO در حال صحبت است..."
+
+
+                it.start()
+            }
+
+
+            player.setOnCompletionListener {
 
                 statusText.text =
                     "🟢 TIMO آماده است"
 
-                val pending =
-                    pendingSpeech
+                it.release()
 
-                pendingSpeech = null
+                if (
+                    mediaPlayer === it
+                ) {
 
-                if (!pending.isNullOrBlank()) {
-
-                    speak(pending)
+                    mediaPlayer =
+                        null
                 }
             }
+
+
+            player.setOnErrorListener {
+                    mp,
+                    _,
+                    _ ->
+
+                statusText.text =
+                    "❌ خطا در پخش صدای TIMO"
+
+                mp.release()
+
+                mediaPlayer =
+                    null
+
+                true
+            }
+
+
+            player.prepareAsync()
+
+        } catch (e: Exception) {
+
+            statusText.text =
+                "❌ خطای پخش: ${e.message}"
         }
     }
 
 
     // =========================================================
-    // صحبت کردن TIMO
+    // STOP AUDIO
     // =========================================================
 
-    private fun speak(text: String) {
+    private fun stopAudio() {
 
-        val cleanText =
-            text
-                .replace("*", "")
-                .replace("#", "")
-                .replace("`", "")
-                .replace("_", "")
-                .trim()
+        try {
 
+            mediaPlayer?.stop()
 
-        if (cleanText.isEmpty()) {
-            return
+        } catch (_: Exception) {
         }
 
 
-        if (!ttsReady || tts == null) {
+        try {
 
-            pendingSpeech = cleanText
+            mediaPlayer?.release()
 
-            statusText.text =
-                "🔊 آماده‌سازی صدا..."
-
-            return
+        } catch (_: Exception) {
         }
 
 
-        val engine = tts ?: return
-
-
-        /*
-         * صدای قبلی را متوقف کن
-         */
-        engine.stop()
-
-
-        /*
-         * صدای TIMO روی MEDIA گوشی
-         */
-        val parameters = Bundle()
-
-        parameters.putInt(
-            TextToSpeech.Engine.KEY_PARAM_STREAM,
-            AudioManager.STREAM_MUSIC
-        )
-
-        parameters.putFloat(
-            TextToSpeech.Engine.KEY_PARAM_VOLUME,
-            1.0f
-        )
-
-
-        statusText.text =
-            "🔊 TIMO در حال صحبت است..."
-
-
-        val result = engine.speak(
-
-            cleanText,
-
-            TextToSpeech.QUEUE_FLUSH,
-
-            parameters,
-
-            "TIMO_SPEECH"
-        )
-
-
-        if (result != TextToSpeech.SUCCESS) {
-
-            statusText.text =
-                "❌ TTS نتوانست صدا را پخش کند"
-        }
+        mediaPlayer =
+            null
     }
 
 
     // =========================================================
-    // Speech Recognizer
+    // SPEECH RECOGNIZER
     // =========================================================
 
     private fun initializeSpeechRecognizer() {
 
         if (
-            !SpeechRecognizer.isRecognitionAvailable(
-                this
-            )
+            !SpeechRecognizer
+                .isRecognitionAvailable(this)
         ) {
 
             statusText.text =
@@ -489,136 +650,142 @@ class MainActivity : Activity() {
 
 
         speechRecognizer =
-            SpeechRecognizer.createSpeechRecognizer(
-                this
-            )
+            SpeechRecognizer
+                .createSpeechRecognizer(this)
 
 
-        speechRecognizer?.setRecognitionListener(
+        speechRecognizer
+            ?.setRecognitionListener(
 
-            object : RecognitionListener {
+                object :
+                    RecognitionListener {
 
-                override fun onReadyForSpeech(
-                    params: Bundle?
-                ) {
+                    override fun onReadyForSpeech(
+                        params: Bundle?
+                    ) {
 
-                    runOnUiThread {
+                        runOnUiThread {
 
-                        statusText.text =
-                            "🎤 گوش می‌دهم..."
+                            statusText.text =
+                                "🎤 گوش می‌دهم..."
+                        }
                     }
-                }
 
 
-                override fun onBeginningOfSpeech() {
+                    override fun onBeginningOfSpeech() {
 
-                    runOnUiThread {
+                        runOnUiThread {
 
-                        statusText.text =
-                            "🎤 در حال شنیدن..."
+                            statusText.text =
+                                "🎤 در حال شنیدن..."
+                        }
                     }
-                }
 
 
-                override fun onEndOfSpeech() {
+                    override fun onEndOfSpeech() {
 
-                    runOnUiThread {
+                        runOnUiThread {
 
-                        statusText.text =
-                            "🧠 در حال پردازش..."
+                            statusText.text =
+                                "🧠 در حال پردازش..."
+                        }
                     }
-                }
 
 
-                override fun onResults(
-                    results: Bundle?
-                ) {
+                    override fun onResults(
+                        results: Bundle?
+                    ) {
 
-                    listening = false
-
-
-                    val resultsList =
-                        results?.getStringArrayList(
-                            SpeechRecognizer.RESULTS_RECOGNITION
-                        )
+                        listening =
+                            false
 
 
-                    val spokenText =
-                        resultsList
-                            ?.firstOrNull()
-                            ?.trim()
+                        val list =
+                            results
+                                ?.getStringArrayList(
+                                    SpeechRecognizer
+                                        .RESULTS_RECOGNITION
+                                )
 
 
-                    runOnUiThread {
+                        val text =
+                            list
+                                ?.firstOrNull()
+                                ?.trim()
 
-                        micButton.text =
-                            "🎤 صحبت با TIMO"
+
+                        runOnUiThread {
+
+                            micButton.text =
+                                "🎤 صحبت با TIMO"
 
 
-                        if (
-                            !spokenText.isNullOrBlank()
-                        ) {
+                            if (
+                                !text.isNullOrBlank()
+                            ) {
 
-                            sendToOpenAI(
-                                spokenText
-                            )
+                                sendToOpenAI(
+                                    text
+                                )
 
-                        } else {
+                            } else {
+
+                                statusText.text =
+                                    "🟢 TIMO آماده است"
+                            }
+                        }
+                    }
+
+
+                    override fun onError(
+                        error: Int
+                    ) {
+
+                        listening =
+                            false
+
+
+                        runOnUiThread {
+
+                            micButton.text =
+                                "🎤 صحبت با TIMO"
 
                             statusText.text =
                                 "🟢 TIMO آماده است"
                         }
                     }
-                }
 
 
-                override fun onError(
-                    error: Int
-                ) {
+                    override fun onRmsChanged(
+                        rmsdB: Float
+                    ) {
+                    }
 
-                    listening = false
 
-                    runOnUiThread {
+                    override fun onBufferReceived(
+                        buffer: ByteArray?
+                    ) {
+                    }
 
-                        micButton.text =
-                            "🎤 صحبت با TIMO"
 
-                        statusText.text =
-                            "🟢 TIMO آماده است"
+                    override fun onPartialResults(
+                        partialResults: Bundle?
+                    ) {
+                    }
+
+
+                    override fun onEvent(
+                        eventType: Int,
+                        params: Bundle?
+                    ) {
                     }
                 }
-
-
-                override fun onRmsChanged(
-                    rmsdB: Float
-                ) {
-                }
-
-
-                override fun onBufferReceived(
-                    buffer: ByteArray?
-                ) {
-                }
-
-
-                override fun onPartialResults(
-                    partialResults: Bundle?
-                ) {
-                }
-
-
-                override fun onEvent(
-                    eventType: Int,
-                    params: Bundle?
-                ) {
-                }
-            }
-        )
+            )
     }
 
 
     // =========================================================
-    // شروع شنیدن
+    // START LISTENING
     // =========================================================
 
     private fun startListening() {
@@ -630,11 +797,9 @@ class MainActivity : Activity() {
         ) {
 
             requestPermissions(
-
                 arrayOf(
                     Manifest.permission.RECORD_AUDIO
                 ),
-
                 100
             )
 
@@ -643,20 +808,22 @@ class MainActivity : Activity() {
 
 
         val recognizer =
-            speechRecognizer ?: return
+            speechRecognizer
+                ?: return
 
 
         val intent =
             Intent(
-                RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+                RecognizerIntent
+                    .ACTION_RECOGNIZE_SPEECH
             )
 
 
         intent.putExtra(
-
-            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-
-            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+            RecognizerIntent
+                .EXTRA_LANGUAGE_MODEL,
+            RecognizerIntent
+                .LANGUAGE_MODEL_FREE_FORM
         )
 
 
@@ -684,28 +851,36 @@ class MainActivity : Activity() {
         )
 
 
-        listening = true
+        listening =
+            true
+
 
         micButton.text =
             "⏹ توقف"
 
 
-        recognizer.startListening(intent)
+        recognizer.startListening(
+            intent
+        )
     }
 
 
     // =========================================================
-    // توقف شنیدن
+    // STOP LISTENING
     // =========================================================
 
     private fun stopListening() {
 
-        listening = false
+        listening =
+            false
 
-        speechRecognizer?.stopListening()
+        speechRecognizer
+            ?.stopListening()
+
 
         micButton.text =
             "🎤 صحبت با TIMO"
+
 
         statusText.text =
             "🟢 TIMO آماده است"
@@ -713,15 +888,15 @@ class MainActivity : Activity() {
 
 
     // =========================================================
-    // ارسال به OpenAI
+    // OPENAI
     // =========================================================
 
     private fun sendToOpenAI(
-        userMessage: String
+        message: String
     ) {
 
         conversationText.append(
-            "\n\n👤 شما:\n$userMessage\n"
+            "\n\n👤 شما:\n$message\n"
         )
 
 
@@ -729,15 +904,18 @@ class MainActivity : Activity() {
             "🧠 TIMO در حال فکر کردن..."
 
 
-        sendButton.isEnabled = false
+        sendButton.isEnabled =
+            false
 
-        micButton.isEnabled = false
+        micButton.isEnabled =
+            false
 
 
         thread {
 
             var connection:
-                    HttpURLConnection? = null
+                HttpURLConnection? =
+                null
 
 
             try {
@@ -781,10 +959,6 @@ class MainActivity : Activity() {
                 )
 
 
-                // ------------------------------------------------
-                // درخواست OpenAI
-                // ------------------------------------------------
-
                 val request =
                     JSONObject()
 
@@ -799,10 +973,9 @@ class MainActivity : Activity() {
                     "instructions",
                     """
                     تو TIMO هستی.
-                    یک دستیار فارسی‌زبان دوستانه و طبیعی هستی.
-                    همیشه فارسی جواب بده.
-                    پاسخ را مستقیم و قابل فهم بده.
-                    برای جواب‌های ساده کوتاه جواب بده.
+                    همیشه فارسی صحبت کن.
+                    طبیعی، دوستانه و کوتاه جواب بده.
+                    برای سؤال ساده مستقیم جواب بده.
                     از Markdown و علامت‌های اضافی استفاده نکن.
                     """.trimIndent()
                 )
@@ -810,7 +983,7 @@ class MainActivity : Activity() {
 
                 request.put(
                     "input",
-                    userMessage
+                    message
                 )
 
 
@@ -828,14 +1001,13 @@ class MainActivity : Activity() {
                 }
 
 
-                val responseCode =
+                val code =
                     connection.responseCode
 
 
-                val inputStream =
-
+                val stream =
                     if (
-                        responseCode in 200..299
+                        code in 200..299
                     ) {
 
                         connection.inputStream
@@ -849,7 +1021,7 @@ class MainActivity : Activity() {
                 val response =
                     BufferedReader(
                         InputStreamReader(
-                            inputStream,
+                            stream,
                             Charsets.UTF_8
                         )
                     ).use {
@@ -872,13 +1044,13 @@ class MainActivity : Activity() {
 
 
                 if (
-                    responseCode !in 200..299
+                    code !in 200..299
                 ) {
 
                     runOnUiThread {
 
                         statusText.text =
-                            "❌ خطای OpenAI: $responseCode"
+                            "❌ خطای OpenAI: $code"
 
                         sendButton.isEnabled =
                             true
@@ -892,7 +1064,9 @@ class MainActivity : Activity() {
 
 
                 val answer =
-                    extractAnswer(response)
+                    extractAnswer(
+                        response
+                    )
 
 
                 if (answer.isBlank()) {
@@ -912,10 +1086,6 @@ class MainActivity : Activity() {
                     return@thread
                 }
 
-
-                // ------------------------------------------------
-                // نمایش جواب و صحبت TIMO
-                // ------------------------------------------------
 
                 runOnUiThread {
 
@@ -942,7 +1112,6 @@ class MainActivity : Activity() {
                     statusText.text =
                         "❌ خطا: ${e.message}"
 
-
                     sendButton.isEnabled =
                         true
 
@@ -959,7 +1128,7 @@ class MainActivity : Activity() {
 
 
     // =========================================================
-    // استخراج جواب OpenAI
+    // PARSE OPENAI
     // =========================================================
 
     private fun extractAnswer(
@@ -972,7 +1141,6 @@ class MainActivity : Activity() {
                 JSONObject(jsonText)
 
 
-            // حالت output_text
             val direct =
                 json.optString(
                     "output_text",
@@ -980,13 +1148,14 @@ class MainActivity : Activity() {
                 )
 
 
-            if (direct.isNotBlank()) {
+            if (
+                direct.isNotBlank()
+            ) {
 
                 direct.trim()
 
             } else {
 
-                // حالت output[]
                 val output =
                     json.optJSONArray(
                         "output"
@@ -1032,7 +1201,8 @@ class MainActivity : Activity() {
                                 part.optString(
                                     "type",
                                     ""
-                                ) == "output_text"
+                                ) ==
+                                "output_text"
                             ) {
 
                                 result.append(
@@ -1060,7 +1230,7 @@ class MainActivity : Activity() {
 
 
     // =========================================================
-    // بررسی دسترسی میکروفون
+    // MICROPHONE PERMISSION
     // =========================================================
 
     private fun checkMicrophonePermission() {
@@ -1072,11 +1242,9 @@ class MainActivity : Activity() {
         ) {
 
             requestPermissions(
-
                 arrayOf(
                     Manifest.permission.RECORD_AUDIO
                 ),
-
                 100
             )
         }
@@ -1084,7 +1252,7 @@ class MainActivity : Activity() {
 
 
     // =========================================================
-    // بررسی ESP32
+    // ESP32
     // =========================================================
 
     private fun checkESP32() {
@@ -1139,7 +1307,8 @@ class MainActivity : Activity() {
                 runOnUiThread {
 
                     if (
-                        result.trim() == "PONG"
+                        result.trim() ==
+                        "PONG"
                     ) {
 
                         statusText.text =
@@ -1148,7 +1317,7 @@ class MainActivity : Activity() {
                     } else {
 
                         statusText.text =
-                            "🟡 TIMO آماده است"
+                            "🟢 TIMO آماده است"
                     }
                 }
 
@@ -1158,7 +1327,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
 
                     statusText.text =
-                        "🟡 TIMO آماده است"
+                        "🟢 TIMO آماده است"
                 }
             }
         }
@@ -1166,26 +1335,37 @@ class MainActivity : Activity() {
 
 
     // =========================================================
-    // خروج
+    // DESTROY
     // =========================================================
 
     override fun onDestroy() {
 
+        stopAudio()
+
+
         try {
-            speechRecognizer?.destroy()
+
+            speechRecognizer
+                ?.destroy()
+
         } catch (_: Exception) {
         }
 
 
         try {
+
             tts?.stop()
             tts?.shutdown()
+
         } catch (_: Exception) {
         }
 
 
-        speechRecognizer = null
-        tts = null
+        speechRecognizer =
+            null
+
+        tts =
+            null
 
 
         super.onDestroy()
